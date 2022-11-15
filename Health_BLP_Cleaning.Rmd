@@ -1,0 +1,105 @@
+---
+title: "Untitled"
+output: html_document
+date: '2022-11-14'
+---
+
+```{r}
+rm(list=ls())
+library(dplyr)
+library(readr)
+library(ivreg)
+library(pracma)
+library(purrr)
+library("readxl")
+setwd("C:/Users/bobme/Desktop/ECON 850/Research Data/Cleaned Data")
+load("C:/Users/bobme/Desktop/ECON 850/Research Data/Cleaned Data/benefits.Rda")
+# load("C:/Users/bobme/Desktop/ECON 850/Research Data/Cleaned Data/enrollment.Rda")
+load("C:/Users/bobme/Desktop/ECON 850/Research Data/Cleaned Data/networks.Rda")
+load("C:/Users/bobme/Desktop/ECON 850/Research Data/Cleaned Data/plan_attributes.Rda")
+load("C:/Users/bobme/Desktop/ECON 850/Research Data/Cleaned Data/plan_crosswalk.Rda")
+load("C:/Users/bobme/Desktop/ECON 850/Research Data/Cleaned Data/puf_1.Rda")
+load("C:/Users/bobme/Desktop/ECON 850/Research Data/Cleaned Data/puf_2.Rda")
+load("C:/Users/bobme/Desktop/ECON 850/Research Data/Cleaned Data/service_areas.Rda")
+```
+
+```{r}
+df2=xwalk_nc[c("PlanID_year","FIPSCode","year")]
+names(df2)<-c("PlanId","County","BusinessYear")
+df3=plan_attributes_nc[c("BusinessYear","IssuerId","MarketCoverage","StandardComponentId","ServiceAreaId","MetalLevel","PlanId","IssuerActuarialValue",'PlanType')]
+df3=subset(df3,MarketCoverage=="Individual")
+df4=service_area_nc[c("BusinessYear","IssuerId","ServiceAreaId","County")]
+df6=puf_2[c("PLAN_ID","AV_PRICE","EFF_DT")]
+df6$EFF_DT=format(as.Date(df6$EFF_DT, format="%d/%m/%Y"),"%Y")
+df6=na.omit(df6)
+names(df6)<-c("StandardComponentId","AvPrice","BusinessYear")
+```
+
+
+```{r}
+enroll14=read_excel("C:/Users/bobme/Desktop/ECON 850/Research Data/CMS Issuer Level Enrollment Data/2014-Enrollment-Disenrollment-PUF.xlsx")
+enroll15=read_excel("C:/Users/bobme/Desktop/ECON 850/Research Data/CMS Issuer Level Enrollment Data/2015-Enrollment-Disenrollment-PUF.xlsx")
+enroll16=read_excel("C:/Users/bobme/Desktop/ECON 850/Research Data/CMS Issuer Level Enrollment Data/2016-Enrollment-Disenrollment-PUF.xlsx")
+enroll17=read_excel("C:/Users/bobme/Desktop/ECON 850/Research Data/CMS Issuer Level Enrollment Data/2017-Enrollment-Disenrollment-PUF.xlsx")
+enroll18=read_excel("C:/Users/bobme/Desktop/ECON 850/Research Data/CMS Issuer Level Enrollment Data/2018-Enrollment-Disenrollment-PUF.xlsx")
+enroll19=read_excel("C:/Users/bobme/Desktop/ECON 850/Research Data/CMS Issuer Level Enrollment Data/2019-Enrollment-Disenrollment-PUF.xlsx")
+enroll20=read_excel("C:/Users/bobme/Desktop/ECON 850/Research Data/CMS Issuer Level Enrollment Data/2020-Enrollment-Disenrollment-PUF.xlsx")
+```
+
+```{r}
+col_names=list('BusinessYear','TenantId','IssuerId','StandardComponentId','EverEnrolled','Disenrolled')
+names(enroll14)<-c(col_names)
+names(enroll15)<-c(col_names)
+names(enroll16)<-c(col_names)
+names(enroll17)<-c(col_names)
+names(enroll18)<-c(col_names)
+names(enroll19)<-c(col_names)
+names(enroll20)<-c(col_names)
+df5=rbind(enroll14,enroll15,enroll16,enroll17,enroll18,enroll19,enroll20)
+df5=df5[df5$TenantId=="NC",]
+```
+
+```{r}
+df5=subset(df5,EverEnrolled !="*")
+df5[df5=='*']='0'
+df5$EverEnrolled=as.numeric(df5$EverEnrolled)
+df5$Disenrolled=as.numeric(df5$Disenrolled)
+df5$TotalEnrolled=df5$EverEnrolled-df5$Disenrolled
+df5[df5<0]=0
+```
+
+```{r}
+df3=na.omit(df3)
+df3=df3[!duplicated(df3[,c("BusinessYear","StandardComponentId")]),]
+df3$PlanTypeDum=0
+df3$PlanTypeDum <-ifelse(df3$PlanType=="HMO",1,0)
+```
+
+```{r}
+df_all=merge(df3,df5,by=c("BusinessYear","StandardComponentId","IssuerId"))
+df_all=merge(df_all,df6,by=c("StandardComponentId","BusinessYear"))
+df_all=na.omit(df_all)
+share_all=df_all %>% dplyr::group_by(ServiceAreaId,BusinessYear) %>%
+  dplyr::summarise(share=TotalEnrolled/sum(TotalEnrolled),
+                   ID=StandardComponentId)
+names(share_all)<-c("ServiceAreaId","BusinessYear","share","StandardComponentId")
+df_all=merge(df_all,share_all,by=c("ServiceAreaId","BusinessYear","StandardComponentId"))
+df_all$IssuerActuarialValue=gsub("%","",df_all$IssuerActuarialValue)
+df_all$IssuerActuarialValue=as.numeric(df_all$IssuerActuarialValue)
+df_all$premium=df_all$IssuerActuarialValue*df_all$AvPrice
+df_all$w=runif(164,min=0.1,max=0.2)
+df_all$x=runif(164,min=0.12,max=0.15)
+df_all <- df_all %>%
+  group_by(ServiceAreaId) %>%
+  dplyr::mutate(mkt=cur_group_id())
+df_all <-df_all %>%
+  group_by(BusinessYear) %>%
+  dplyr::mutate(time=cur_group_id())
+df_all <-df_all %>%
+  group_by(IssuerId) %>%
+  dplyr::mutate(issuer=cur_group_id())
+df_all <- df_all %>%
+  group_by(StandardComponentId) %>%
+  dplyr::mutate(prod=cur_group_id())
+write.csv(df_all,"C:/Users/bobme/Desktop/ECON 850/Research Data/Real_BLP.csv")
+```
